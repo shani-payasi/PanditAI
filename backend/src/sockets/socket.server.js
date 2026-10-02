@@ -1,28 +1,25 @@
-const { Server } = require('socket.io');
-const cookie = require('cookie');
-const jwt = require('jsonwebtoken');
-const userModel = require('../models/user.model');
-const aiService = require('../service/ai.service');
-const messageModel = require('../models/message.model');
+const { Server } = require("socket.io");
+const cookie = require("cookie");
+const jwt = require("jsonwebtoken");
+
+const userModel = require("../models/user.model");
+const messageModel = require("../models/message.model");
+const aiService = require("../service/ai.service");
+
+const { createMemory,queryMemory } = require("../service/vector.service");
 
 function initSocketServer(httpServer) {
-
   const io = new Server(httpServer, {});
 
-  // Socket Authentication Middleware
+  // Authentication
   io.use(async (socket, next) => {
-
-    const cookies = cookie.parse(
-      socket.handshake.headers?.cookie || ""
-    );
-
-    if (!cookies.token) {
-      return next(
-        new Error("Authentication error: No token provided")
-      );
-    }
-
     try {
+      const cookies = cookie.parse(
+        socket.handshake.headers?.cookie || ""
+      );
+
+      if (!cookies.token)
+        return next(new Error("Authentication error: No token provided"));
 
       const decoded = jwt.verify(
         cookies.token,
@@ -31,108 +28,124 @@ function initSocketServer(httpServer) {
 
       const user = await userModel.findById(decoded.id);
 
-      if (!user) {
-        return next(
-          new Error("Authentication error: User not found")
-        );
-      }
+      if (!user)
+        return next(new Error("Authentication error: User not found"));
 
       socket.user = user;
-
       next();
 
-    } catch (err) {
-
-      console.error("Socket Authentication Error:", err);
-
-      return next(
-        new Error("Authentication error: Invalid token")
-      );
+    } catch (error) {
+      console.error("Socket Authentication Error:", error);
+      next(new Error("Authentication error: Invalid token"));
     }
   });
 
-
-  // Socket Connection
+  // Connection
   io.on("connection", (socket) => {
-
     console.log("New socket connection:", socket.id);
 
-
     socket.on("ai-message", async (messagePayLoad) => {
-
       try {
-
-        console.log("Message Payload:", messagePayLoad);
-
-
-        // 1. Save user message
-        await messageModel.create({
+        // Save user message
+        const userMessage = await messageModel.create({
           chat: messagePayLoad.chat,
           user: socket.user._id,
           content: messagePayLoad.content,
           role: "user"
         });
 
+        // User vector
+        const vector = await aiService.generateVector(
+          messagePayLoad.content
+        );
 
-        // 2. Get chat history
-        const chatHistory = await messageModel.find({
-          chat: messagePayLoad.chat
+       const memory = await queryMemory({
+  queryVector: vector,
+  limit: 3,
+  metadata: {}
+});
+
+        await createMemory({
+          vector,
+          messageId: userMessage._id,
+          metadata: {
+            chat: messagePayLoad.chat,
+            user: socket.user._id,
+            content: messagePayLoad.content,
+            role: "user"
+          }
         });
 
+         
+        console.log("Memory retrieved from Pinecone:", memory);
 
-        // 3. Convert history for Gemini
-        const formattedHistory = chatHistory.map((item) => {
-          return {
-            role: item.role,
-            parts: [
-              {
-                text: item.content
-              }
-            ]
-          };
-        });
+        // Chat history
+        const chatHistory = (
+          await messageModel
+            .find({ chat: messagePayLoad.chat })
+            .sort({ createdAt: -1 })
+            .limit(20)
+            .lean()
+        ).reverse();
 
+        const formattedHistory = chatHistory.map((item) => ({
+          type: item.role === "user"
+            ? "user_input"
+            : "model_output",
+          content: [
+            {
+              type: "text",
+              text: item.content
+            }
+          ]
+        }));
 
-        console.log("Chat History:", formattedHistory);
-
-
-        // 4. Generate AI response
+        // AI response
         const response = await aiService.generateResponse(
           formattedHistory
         );
 
-
-        // 5. Save AI response
-        await messageModel.create({
+        // Save AI message
+        const aiMessage = await messageModel.create({
           chat: messagePayLoad.chat,
           user: socket.user._id,
           content: response,
           role: "model"
         });
 
+        // AI vector
+        const aiVector = await aiService.generateVector(response);
 
-        // 6. Send response to frontend
+       
+
+        await createMemory({
+          vector: aiVector,
+          messageId: aiMessage._id,
+          metadata: {
+            chat: messagePayLoad.chat,
+            user: socket.user._id,
+            content: response,
+            role: "model"
+          }
+        });
+
+        // Send response
         socket.emit("ai-response", {
           content: response,
           chat: messagePayLoad.chat
-        });
-
+        }); 
 
       } catch (error) {
-
         console.error("AI Message Error:", error);
 
-        // Don't crash server
         socket.emit("ai-response", {
           content: "Sorry, AI service is temporarily unavailable.",
           chat: messagePayLoad.chat
         });
-
       }
-
     });
-
   });
 }
 
 module.exports = initSocketServer;
+
