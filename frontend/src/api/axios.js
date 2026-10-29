@@ -1,7 +1,11 @@
 import axios from "axios";
 
+// If VITE_BACKEND_URL is set (e.g. in production), use it; otherwise fallback to relative /api for local dev proxy
+const backendUrl = import.meta.env.VITE_BACKEND_URL;
+const baseURL = backendUrl ? `${backendUrl.replace(/\/$/, "")}/api` : "/api";
+
 const api = axios.create({
-  baseURL: "/api",
+  baseURL,
   withCredentials: true,
   headers: {
     "Content-Type": "application/json",
