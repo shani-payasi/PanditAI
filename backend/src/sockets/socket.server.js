@@ -8,9 +8,15 @@ const aiService = require("../service/ai.service");
 const { createMemory, queryMemory } = require("../service/vector.service");
 
 function initSocketServer(httpServer) {
+  const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean)
+    .concat(["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"]);
+
   const io = new Server(httpServer, {
     cors: {
-      origin: ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"],
+      origin: ALLOWED_ORIGINS,
       credentials: true,
     },
   });
