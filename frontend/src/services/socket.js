@@ -1,32 +1,33 @@
 import { io } from "socket.io-client";
 
+// Connect socket to backend URL (not Vercel frontend)
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
+
 let socket = null;
 
 export const connectSocket = () => {
+  if (socket && socket.connected) return socket;
+
   const token = localStorage.getItem("chat_token");
 
-  if (!socket) {
-    socket = io("/", {
-      withCredentials: true,
-      auth: { token },
-      transports: ["websocket", "polling"],
-      autoConnect: true,
-    });
+  socket = io(BACKEND_URL, {
+    withCredentials: true,
+    auth: { token },
+    transports: ["websocket", "polling"],
+  });
 
-    socket.on("connect", () => {
-      console.log("Socket connected:", socket.id);
-    });
+  socket.on("connect", () => {
+    console.log("Socket connected:", socket.id);
+  });
 
-    socket.on("connect_error", (error) => {
-      console.error("Socket connection error:", error.message);
-    });
+  socket.on("connect_error", (error) => {
+    console.error("Socket connection error:", error.message);
+  });
 
-    socket.on("disconnect", (reason) => {
-      console.log("Socket disconnected:", reason);
-    });
-  } else if (!socket.connected) {
-    socket.connect();
-  }
+  socket.on("disconnect", (reason) => {
+    console.log("Socket disconnected:", reason);
+  });
+
   return socket;
 };
 
